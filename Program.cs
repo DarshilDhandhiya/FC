@@ -59,7 +59,7 @@ namespace FileCopy
                 // Get list of projects from master database
                 var masterDataAccessHelper = new DataAccessHelper(_ConnectionStringM);
                 DataTable dtProject = (await masterDataAccessHelper.ExecuteDataTableAsync(
-                    "SELECT [ProjectCode], [Instance] FROM [Projects] WHERE ISNULL([IsFileCopyRequired], 0) = 1"
+                    "SELECT [ProjectCode], [Instance], ISNULL([DeliveryLocationSystem], '') AS [DeliveryLocationSystem] FROM [Projects] WHERE ISNULL([IsFileCopyRequired], 0) = 1"
                 ));
 
                 if (dtProject.Rows.Count == 0)
@@ -77,6 +77,7 @@ namespace FileCopy
                 {
                     string strProjCode = rowProject["ProjectCode"]?.ToString() ?? "";
                     string strInstance = rowProject["Instance"]?.ToString() ?? "";
+                    string strDeliveryLocationSystem = rowProject["DeliveryLocationSystem"]?.ToString() ?? "";
 
                     if (string.IsNullOrEmpty(strProjCode))
                     {
@@ -117,7 +118,7 @@ namespace FileCopy
                         Console.WriteLine();
 
                         // Process all files for this project
-                        var copyLogs = await fileCopyService.CopyAllFilesAsync();
+                        var copyLogs = await fileCopyService.CopyAllFilesAsync(strDeliveryLocationSystem);
                         var logList = copyLogs.ToList();
 
                         // Calculate counts for this project

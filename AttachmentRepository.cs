@@ -8,6 +8,7 @@ namespace FileCopy.Data
     {
         Task<Attachment?> GetByIdAsync(int id);
         Task<List<Attachment>> GetAllAsync();
+        Task UpdateFilePathAbsAsync(int id, string filePathAbs);
     }
 
     public class AttachmentRepository : IAttachmentRepository
@@ -42,7 +43,7 @@ namespace FileCopy.Data
         public async Task<List<Attachment>> GetAllAsync()
         {
             return await _dataAccessHelper.ExecuteReaderAsync<Attachment>(
-                "SELECT ID, FilePath, FilePathAbs, SystemFileName, 1 AS Overwrite, CreatedDate FROM TransEngChk_T_Att ORDER BY CreatedDate ASC",
+                "SELECT ID, FilePath, FilePathAbs, SystemFileName, 1 AS Overwrite, CreatedDate FROM TransEngChk_T_Att WHERE (FilePathAbs IS NULL OR FilePathAbs = '') ORDER BY CreatedDate ASC",
                 reader => new Attachment
                 {
                     Id = reader.GetInt32(0),
@@ -53,6 +54,16 @@ namespace FileCopy.Data
                     CreatedDate = reader.GetDateTime(5)
                 },
                 CommandType.Text
+            );
+        }
+
+        public async Task UpdateFilePathAbsAsync(int id, string filePathAbs)
+        {
+            await _dataAccessHelper.ExecuteNonQueryAsync(
+                "UPDATE TransEngChk_T_Att SET FilePathAbs = @FilePathAbs WHERE ID = @Id",
+                CommandType.Text,
+                new SqlParameter("@FilePathAbs", filePathAbs),
+                new SqlParameter("@Id", id)
             );
         }
     }

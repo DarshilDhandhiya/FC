@@ -10,7 +10,7 @@ namespace FileCopy.Services
     {
         Task<CopyLog> CopyFileAsync(int attachmentId);
         Task<IEnumerable<Attachment>> GetPendingAttachmentsAsync();
-        Task<IEnumerable<CopyLog>> CopyAllFilesAsync();
+        Task<IEnumerable<CopyLog>> CopyAllFilesAsync(string deliveryLocationSystem);
         Task<IEnumerable<CopyLog>> GetCopyLogsAsync();
         Task<IEnumerable<CopyLog>> GetCopyLogsBetweenAsync(DateTime startDate, DateTime endDate);
     }
@@ -60,7 +60,7 @@ namespace FileCopy.Services
                 copyLog.DestinationPath = attachment.DestinationPath;
                 copyLog.OverwriteFlag = attachment.Overwrite;
 
-                await PerformFileCopyAsync(attachment, copyLog);
+                await PerformFileCopyAsync(attachment, copyLog, string.Empty);
             }
             catch (Exception ex)
             {
@@ -90,7 +90,7 @@ namespace FileCopy.Services
             }
         }
 
-        public async Task<IEnumerable<CopyLog>> CopyAllFilesAsync()
+        public async Task<IEnumerable<CopyLog>> CopyAllFilesAsync(string deliveryLocationSystem)
         {
             _logger.LogInformation("Starting batch copy operation for all attachments.");
             var copyLogs = new List<CopyLog>();
@@ -121,7 +121,7 @@ namespace FileCopy.Services
                         copyLog.DestinationPath = attachment.DestinationPath;
                         copyLog.OverwriteFlag = attachment.Overwrite;
 
-                        await PerformFileCopyAsync(attachment, copyLog);
+                        await PerformFileCopyAsync(attachment, copyLog, deliveryLocationSystem);
                         copyLogs.Add(copyLog);
                     }
                     catch (Exception ex)
@@ -145,8 +145,27 @@ namespace FileCopy.Services
             return copyLogs;
         }
 
-        private async Task PerformFileCopyAsync(Attachment attachment, CopyLog copyLog)
+        private async Task PerformFileCopyAsync(Attachment attachment, CopyLog copyLog, string deliveryLocationSystem)
         {
+            // Compute FilePathAbs (DestinationPath) if not already set
+            if (string.IsNullOrEmpty(attachment.DestinationPath))
+            {
+                string computed = ComputeFilePathAbs(attachment.SourcePath, deliveryLocationSystem);
+                if (string.IsNullOrEmpty(computed))
+                {
+                    copyLog.Status = "Failed";
+                    copyLog.ErrorDetails = $"Cannot compute destination path: no matching folder found between FilePath '{attachment.SourcePath}' and DeliveryLocationSystem '{deliveryLocationSystem}'.";
+                    copyLog.EndTime = DateTime.UtcNow;
+                    _logger.LogWarning(copyLog.ErrorDetails);
+                    await SaveCopyLogAsync(copyLog);
+                    return;
+                }
+
+                attachment.DestinationPath = computed;
+                copyLog.DestinationPath = computed;
+                _logger.LogInformation($"Computed FilePathAbs: {computed}");
+            }
+
             if (!File.Exists(attachment.SourcePath))
             {
                 copyLog.Status = "Failed";
@@ -221,6 +240,7 @@ namespace FileCopy.Services
                 if (copySuccessful)
                 {
                     copyLog.Status = "Success";
+                    await _attachmentRepository.UpdateFilePathAbsAsync(attachment.Id, attachment.DestinationPath);
                 }
                 else
                 {
@@ -242,6 +262,37 @@ namespace FileCopy.Services
             {
                 await SaveCopyLogAsync(copyLog);
             }
+        }
+
+        private static string ComputeFilePathAbs(string filePath, string deliveryLocationSystem)
+        {
+            if (string.IsNullOrEmpty(filePath) || string.IsNullOrEmpty(deliveryLocationSystem))
+                return string.Empty;
+
+            // Normalize: strip trailing separators to get the base delivery path
+            string deliveryBase = deliveryLocationSystem.TrimEnd('\\', '/');
+
+            // The deepest folder in DeliveryLocationSystem is the match anchor
+            string matchFolder = Path.GetFileName(deliveryBase);
+            if (string.IsNullOrEmpty(matchFolder))
+                return string.Empty;
+
+            // Split FilePath into segments to find the matching folder
+            string[] parts = filePath.Split(new[] { '\\', '/' }, StringSplitOptions.RemoveEmptyEntries);
+
+            int matchIndex = -1;
+            for (int i = 0; i < parts.Length; i++)
+            {
+                if (string.Equals(parts[i], matchFolder, StringComparison.OrdinalIgnoreCase))
+                    matchIndex = i;
+            }
+
+            if (matchIndex < 0 || matchIndex >= parts.Length - 1)
+                return string.Empty;
+
+            // Everything after the matched folder is the relative path
+            string relativePath = string.Join("\\", parts.Skip(matchIndex + 1));
+            return Path.Combine(deliveryBase, relativePath);
         }
 
         private async Task SaveCopyLogAsync(CopyLog copyLog)
